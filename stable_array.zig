@@ -198,6 +198,11 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     const w = os.windows;
                     const addr: usize = @ptrToInt(self.items.ptr) + new_capacity_bytes;
                     w.VirtualFree(@intToPtr(w.PVOID, addr), bytes_to_free, w.MEM_DECOMMIT);
+                } else {
+                    var base_addr: usize = @ptrToInt(self.items.ptr);
+                    var offset_addr: usize = base_addr + new_capacity_bytes;
+                    var addr: [*]align(mem.page_size) u8 = @alignCast(mem.page_size, @intToPtr([*]u8, offset_addr));
+                    os.madvise(addr, bytes_to_free, std.c.MADV.DONTNEED) catch unreachable;
                 }
 
                 self.capacity = new_capacity_bytes / k_sizeof;
