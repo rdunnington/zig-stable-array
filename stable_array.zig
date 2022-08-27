@@ -198,8 +198,6 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     const w = os.windows;
                     const addr: usize = @ptrToInt(self.items.ptr) + new_capacity_bytes;
                     w.VirtualFree(@intToPtr(w.PVOID, addr), bytes_to_free, w.MEM_DECOMMIT);
-                } else {
-                    unreachable;
                 }
 
                 self.capacity = new_capacity_bytes / k_sizeof;
@@ -222,6 +220,11 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                 if (builtin.os.tag == .windows) {
                     const w = os.windows;
                     w.VirtualFree(@ptrCast(*anyopaque, self.items.ptr), 0, w.MEM_RELEASE);
+                } else {
+                    var slice: []align(mem.page_size) const u8 = undefined;
+                    slice.ptr = @alignCast(mem.page_size, @ptrCast([*]u8, self.items.ptr));
+                    slice.len = self.max_virtual_alloc_bytes;
+                    os.munmap(slice);
                 }
             }
 
@@ -241,7 +244,13 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                         self.items.ptr = @alignCast(alignment, @ptrCast([*]T, addr));
                         self.items.len = 0;
                     } else {
-                        unreachable;
+                        const prot: u32 = std.c.PROT.READ | std.c.PROT.WRITE;
+                        const map: u32 = std.c.MAP.PRIVATE | std.c.MAP.ANONYMOUS;
+                        const fd: os.fd_t = -1;
+                        const offset: usize = 0;
+                        var slice = try os.mmap(null, self.max_virtual_alloc_bytes, prot, map, fd, offset);
+                        self.items.ptr = @alignCast(alignment, @ptrCast([*]T, slice.ptr));
+                        self.items.len = 0;
                     }
                 } else if (current_capacity_bytes == self.max_virtual_alloc_bytes) {
                     // If you hit this, you likely either didn't reserve enough space up-front, or have a leak that is allocating too many elements
@@ -251,8 +260,6 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                 if (builtin.os.tag == .windows) {
                     const w = std.os.windows;
                     _ = try w.VirtualAlloc(@ptrCast(w.PVOID, self.items.ptr), new_capacity_bytes, w.MEM_COMMIT, w.PAGE_READWRITE);
-                } else {
-                    unreachable;
                 }
             }
 
@@ -315,11 +322,17 @@ test "append" {
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     try a.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     assert(a.calcTotalUsedBytes(a.capacity) == mem.page_size);
+    for (a.items) |v, i| {
+        assert(v == i);
+    }
     a.deinit();
 
     var b = StableArrayAligned(u8, mem.page_size).init(TEST_VIRTUAL_ALLOC_SIZE);
     try b.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     assert(b.calcTotalUsedBytes(b.capacity) == mem.page_size * 10);
+    for (b.items) |v, i| {
+        assert(v == i);
+    }
     b.deinit();
 }
 
@@ -329,6 +342,9 @@ test "shrinkAndFree" {
     a.shrinkAndFree(5);
     assert(a.calcTotalUsedBytes(a.capacity) == mem.page_size);
     assert(a.items.len == 5);
+    for (a.items) |v, i| {
+        assert(v == i);
+    }
     a.deinit();
 
     var b = StableArrayAligned(u8, mem.page_size).init(TEST_VIRTUAL_ALLOC_SIZE);
@@ -336,6 +352,9 @@ test "shrinkAndFree" {
     b.shrinkAndFree(5);
     assert(b.calcTotalUsedBytes(b.capacity) == mem.page_size * 5);
     assert(b.items.len == 5);
+    for (b.items) |v, i| {
+        assert(v == i);
+    }
     b.deinit();
 
     var c = StableArrayAligned(u8, 2048).init(TEST_VIRTUAL_ALLOC_SIZE);
@@ -344,13 +363,19 @@ test "shrinkAndFree" {
     assert(c.calcTotalUsedBytes(c.capacity) == mem.page_size * 3);
     assert(c.capacity == 6);
     assert(c.items.len == 5);
+    for (c.items) |v, i| {
+        assert(v == i);
+    }
     c.deinit();
 }
 
 test "out of memory" {
     var a = StableArrayAligned(u8, mem.page_size).init(TEST_VIRTUAL_ALLOC_SIZE);
     const max_capacity: usize = TEST_VIRTUAL_ALLOC_SIZE / mem.page_size;
-    try a.appendNTimes(0, max_capacity);
+    try a.appendNTimes(0xFF, max_capacity);
+    for (a.items) |v| {
+        assert(v == 0xFF);
+    }
     assert(a.max_virtual_alloc_bytes == a.calcTotalUsedBytes(a.capacity));
     assert(a.capacity == max_capacity);
     assert(a.items.len == max_capacity);
