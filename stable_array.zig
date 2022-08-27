@@ -202,7 +202,11 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     var base_addr: usize = @ptrToInt(self.items.ptr);
                     var offset_addr: usize = base_addr + new_capacity_bytes;
                     var addr: [*]align(mem.page_size) u8 = @alignCast(mem.page_size, @intToPtr([*]u8, offset_addr));
-                    os.madvise(addr, bytes_to_free, std.c.MADV.DONTNEED) catch unreachable;
+                    if (comptime builtin.target.isDarwin()) {
+                        darwin_madvise(addr, bytes_to_free, 4) catch unreachable;
+                    } else {
+                        os.madvise(addr, bytes_to_free, std.c.MADV.DONTNEED) catch unreachable;
+                    }
                 }
 
                 self.capacity = new_capacity_bytes / k_sizeof;
@@ -305,6 +309,27 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             return mem.alignForward(k_sizeof * capacity, mem.page_size);
         }
     };
+}
+
+fn darwin_syscall3(number: usize, arg1: usize, arg2: usize, arg3: usize) usize {
+    return asm volatile ("syscall"
+        : [ret] "={rax}" (-> usize),
+        : [number] "{rax}" (number),
+          [arg1] "{rdi}" (arg1),
+          [arg2] "{rsi}" (arg2),
+          [arg3] "{rdx}" (arg3),
+        : "rcx", "r11", "memory"
+    );
+}
+
+fn darwin_madvise(ptr: [*]align(mem.page_size) u8, length: usize, advice: u32) os.MadviseError!void {
+    if (darwin_syscall3(75, @ptrToInt(ptr), length, advice) == -1) {
+        return switch (os.errno()) {
+            os.c.INVAL => os.MadviseError.InvalidSyscall,
+            os.c.ENOMEM => os.MadviseError.OutOfMemory,
+            else => os.MadviseError.Unexpected,
+        };
+    }
 }
 
 const TEST_VIRTUAL_ALLOC_SIZE = 1024 * 1024 * 2; // 2 MB
