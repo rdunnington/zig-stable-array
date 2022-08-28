@@ -188,8 +188,8 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
         pub fn shrinkAndFree(self: *Self, new_len: usize) void {
             assert(new_len <= self.items.len);
 
-            const new_capacity_bytes = self.calcTotalUsedBytes(new_len);
-            const current_capacity_bytes: usize = self.calcTotalUsedBytes(self.capacity);
+            const new_capacity_bytes = calcBytesUsedForCapacity(new_len);
+            const current_capacity_bytes: usize = calcBytesUsedForCapacity(self.capacity);
 
             if (new_capacity_bytes < current_capacity_bytes) {
                 const bytes_to_free: usize = current_capacity_bytes - new_capacity_bytes;
@@ -243,8 +243,8 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
         }
 
         pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) !void {
-            const new_capacity_bytes = self.calcTotalUsedBytes(new_capacity);
-            const current_capacity_bytes: usize = self.calcTotalUsedBytes(self.capacity);
+            const new_capacity_bytes = calcBytesUsedForCapacity(new_capacity);
+            const current_capacity_bytes: usize = calcBytesUsedForCapacity(self.capacity);
 
             if (current_capacity_bytes < new_capacity_bytes) {
                 if (self.capacity == 0) {
@@ -305,8 +305,11 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             return self.allocatedSlice()[self.items.len..];
         }
 
-        pub fn calcTotalUsedBytes(self: Self, capacity: usize) usize {
-            _ = self;
+        pub fn calcTotalUsedBytes(self: Self) usize {
+            return calcBytesUsedForCapacity(self.capacity);
+        }
+
+        fn calcBytesUsedForCapacity(capacity: usize) usize {
             return mem.alignForward(k_sizeof * capacity, mem.page_size);
         }
     };
@@ -352,7 +355,7 @@ test "init" {
 test "append" {
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     try a.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
-    assert(a.calcTotalUsedBytes(a.capacity) == mem.page_size);
+    assert(a.calcTotalUsedBytes() == mem.page_size);
     for (a.items) |v, i| {
         assert(v == i);
     }
@@ -360,7 +363,7 @@ test "append" {
 
     var b = StableArrayAligned(u8, mem.page_size).init(TEST_VIRTUAL_ALLOC_SIZE);
     try b.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
-    assert(b.calcTotalUsedBytes(b.capacity) == mem.page_size * 10);
+    assert(b.calcTotalUsedBytes() == mem.page_size * 10);
     for (b.items) |v, i| {
         assert(v == i);
     }
@@ -371,7 +374,7 @@ test "shrinkAndFree" {
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     try a.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     a.shrinkAndFree(5);
-    assert(a.calcTotalUsedBytes(a.capacity) == mem.page_size);
+    assert(a.calcTotalUsedBytes() == mem.page_size);
     assert(a.items.len == 5);
     for (a.items) |v, i| {
         assert(v == i);
@@ -381,7 +384,7 @@ test "shrinkAndFree" {
     var b = StableArrayAligned(u8, mem.page_size).init(TEST_VIRTUAL_ALLOC_SIZE);
     try b.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     b.shrinkAndFree(5);
-    assert(b.calcTotalUsedBytes(b.capacity) == mem.page_size * 5);
+    assert(b.calcTotalUsedBytes() == mem.page_size * 5);
     assert(b.items.len == 5);
     for (b.items) |v, i| {
         assert(v == i);
@@ -391,7 +394,7 @@ test "shrinkAndFree" {
     var c = StableArrayAligned(u8, 2048).init(TEST_VIRTUAL_ALLOC_SIZE);
     try c.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     c.shrinkAndFree(5);
-    assert(c.calcTotalUsedBytes(c.capacity) == mem.page_size * 3);
+    assert(c.calcTotalUsedBytes() == mem.page_size * 3);
     assert(c.capacity == 6);
     assert(c.items.len == 5);
     for (c.items) |v, i| {
@@ -407,7 +410,7 @@ test "out of memory" {
     for (a.items) |v| {
         assert(v == 0xFF);
     }
-    assert(a.max_virtual_alloc_bytes == a.calcTotalUsedBytes(a.capacity));
+    assert(a.max_virtual_alloc_bytes == a.calcTotalUsedBytes());
     assert(a.capacity == max_capacity);
     assert(a.items.len == max_capacity);
 
