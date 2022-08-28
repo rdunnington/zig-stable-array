@@ -203,7 +203,8 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     var offset_addr: usize = base_addr + new_capacity_bytes;
                     var addr: [*]align(mem.page_size) u8 = @alignCast(mem.page_size, @intToPtr([*]u8, offset_addr));
                     if (comptime builtin.target.isDarwin()) {
-                        darwin_madvise(addr, bytes_to_free, 4) catch unreachable;
+                        const MADV_DONTNEED = 4;
+                        darwin_madvise(addr, bytes_to_free, MADV_DONTNEED) catch unreachable;
                     } else {
                         os.madvise(addr, bytes_to_free, std.c.MADV.DONTNEED) catch unreachable;
                     }
