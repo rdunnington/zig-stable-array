@@ -250,7 +250,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                 if (self.capacity == 0) {
                     if (builtin.os.tag == .windows) {
                         const w = os.windows;
-                        const addr: w.PVOID = try w.VirtualAlloc(null, new_capacity_bytes, w.MEM_RESERVE, w.PAGE_READWRITE);
+                        const addr: w.PVOID = try w.VirtualAlloc(null, self.max_virtual_alloc_bytes, w.MEM_RESERVE, w.PAGE_READWRITE);
                         self.items.ptr = @alignCast(alignment, @ptrCast([*]T, addr));
                         self.items.len = 0;
                     } else {
@@ -401,6 +401,17 @@ test "shrinkAndFree" {
         assert(v == i);
     }
     c.deinit();
+}
+
+test "resize" {
+    const max: usize = 1024 * 1024 * 1;
+    var a = StableArray(u8).init(max);
+
+    var size: usize = 512;
+    while (size <= max) {
+        try a.resize(size);
+        size *= 2;
+    }
 }
 
 test "out of memory" {
