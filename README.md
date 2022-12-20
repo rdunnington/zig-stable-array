@@ -6,7 +6,7 @@ Ideal use cases are for large arrays that potentially grow over time. When reall
 Typical usage is to specify a large size up-front that the array should not encounter, such as 2GB+. Then use the array as usual. If freeing memory is desired, `shrinkAndFree()` will decommit memory at the end of the array. Total memory usage can be calculated with `calcTotalUsedBytes()`. The interface is very similar to ArrayList, except for the allocator semantics. Since typical heap semantics don't apply to this array, the memory is manually managed using mmap/munmap and VirtualAlloc/VirtualFree on nix and Windows platforms, respectively.
 
 Usage:
-```    
+```zig
 var array = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
 try array.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
 assert(array.calcTotalUsedBytes() == mem.page_size);
