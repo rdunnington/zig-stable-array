@@ -76,7 +76,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                 mem.copy(T, range, new_items);
                 const after_subrange = start + new_items.len;
 
-                for (self.items[after_range..]) |item, i| {
+                for (self.items[after_range..], 0..) |item, i| {
                     self.items[after_subrange..][i] = item;
                 }
 
@@ -166,7 +166,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             if (newlen == i) return self.pop();
 
             const old_item = self.items[i];
-            for (self.items[i..newlen]) |*b, j| b.* = self.items[i + 1 + j];
+            for (self.items[i..newlen], 0..) |*b, j| b.* = self.items[i + 1 + j];
             self.items[newlen] = undefined;
             self.items.len = newlen;
             return old_item;
@@ -356,7 +356,7 @@ test "append" {
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     try a.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     assert(a.calcTotalUsedBytes() == mem.page_size);
-    for (a.items) |v, i| {
+    for (a.items, 0..) |v, i| {
         assert(v == i);
     }
     a.deinit();
@@ -364,7 +364,7 @@ test "append" {
     var b = StableArrayAligned(u8, mem.page_size).init(TEST_VIRTUAL_ALLOC_SIZE);
     try b.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     assert(b.calcTotalUsedBytes() == mem.page_size * 10);
-    for (b.items) |v, i| {
+    for (b.items, 0..) |v, i| {
         assert(v == i);
     }
     b.deinit();
@@ -376,7 +376,7 @@ test "shrinkAndFree" {
     a.shrinkAndFree(5);
     assert(a.calcTotalUsedBytes() == mem.page_size);
     assert(a.items.len == 5);
-    for (a.items) |v, i| {
+    for (a.items, 0..) |v, i| {
         assert(v == i);
     }
     a.deinit();
@@ -386,7 +386,7 @@ test "shrinkAndFree" {
     b.shrinkAndFree(5);
     assert(b.calcTotalUsedBytes() == mem.page_size * 5);
     assert(b.items.len == 5);
-    for (b.items) |v, i| {
+    for (b.items, 0..) |v, i| {
         assert(v == i);
     }
     b.deinit();
@@ -397,7 +397,7 @@ test "shrinkAndFree" {
     assert(c.calcTotalUsedBytes() == mem.page_size * 3);
     assert(c.capacity == 6);
     assert(c.items.len == 5);
-    for (c.items) |v, i| {
+    for (c.items, 0..) |v, i| {
         assert(v == i);
     }
     c.deinit();
