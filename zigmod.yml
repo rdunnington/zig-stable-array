@@ -1,0 +1,6 @@
+id: i77wzadrw768pcl73aopto4xhgxb1oqg3fjqa93tkee4ncyt
+name: stable-array
+main: stable_array.zig
+license: Unlicense
+description: Address-stable array with a max size that allocates directly from virtual memory.
+dependencies:
