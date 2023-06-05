@@ -110,13 +110,13 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
         pub fn appendNTimes(self: *Self, value: T, n: usize) !void {
             const old_len = self.items.len;
             try self.resize(self.items.len + n);
-            mem.set(T, self.items[old_len..self.items.len], value);
+            @memset(self.items[old_len..self.items.len], value);
         }
 
         pub fn appendNTimesAssumeCapacity(self: *Self, value: T, n: usize) void {
             const new_len = self.items.len + n;
             assert(new_len <= self.capacity);
-            mem.set(T, self.items.ptr[self.items.len..new_len], value);
+            @memset(self.items.ptr[self.items.len..new_len], value);
             self.items.len = new_len;
         }
 
