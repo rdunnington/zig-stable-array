@@ -196,12 +196,12 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
 
                 if (builtin.os.tag == .windows) {
                     const w = os.windows;
-                    const addr: usize = @ptrToInt(self.items.ptr) + new_capacity_bytes;
-                    w.VirtualFree(@intToPtr(w.PVOID, addr), bytes_to_free, w.MEM_DECOMMIT);
+                    const addr: usize = @intFromPtr(self.items.ptr) + new_capacity_bytes;
+                    w.VirtualFree(@as(w.PVOID, @ptrFromInt(addr)), bytes_to_free, w.MEM_DECOMMIT);
                 } else {
-                    var base_addr: usize = @ptrToInt(self.items.ptr);
+                    var base_addr: usize = @intFromPtr(self.items.ptr);
                     var offset_addr: usize = base_addr + new_capacity_bytes;
-                    var addr: [*]align(mem.page_size) u8 = @alignCast(mem.page_size, @intToPtr([*]u8, offset_addr));
+                    var addr: [*]align(mem.page_size) u8 = @ptrFromInt(offset_addr);
                     if (comptime builtin.target.isDarwin()) {
                         const MADV_DONTNEED = 4;
                         darwin_madvise(addr, bytes_to_free, MADV_DONTNEED) catch unreachable;
@@ -229,10 +229,10 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             if (self.capacity > 0) {
                 if (builtin.os.tag == .windows) {
                     const w = os.windows;
-                    w.VirtualFree(@ptrCast(*anyopaque, self.items.ptr), 0, w.MEM_RELEASE);
+                    w.VirtualFree(@as(*anyopaque, @ptrCast(self.items.ptr)), 0, w.MEM_RELEASE);
                 } else {
                     var slice: []align(mem.page_size) const u8 = undefined;
-                    slice.ptr = @alignCast(mem.page_size, @ptrCast([*]u8, self.items.ptr));
+                    slice.ptr = @alignCast(@as([*]u8, @ptrCast(self.items.ptr)));
                     slice.len = self.max_virtual_alloc_bytes;
                     os.munmap(slice);
                 }
@@ -251,7 +251,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     if (builtin.os.tag == .windows) {
                         const w = os.windows;
                         const addr: w.PVOID = try w.VirtualAlloc(null, self.max_virtual_alloc_bytes, w.MEM_RESERVE, w.PAGE_READWRITE);
-                        self.items.ptr = @ptrCast([*]T, @alignCast(alignment, addr));
+                        self.items.ptr = @alignCast(@ptrCast(addr));
                         self.items.len = 0;
                     } else {
                         const prot: u32 = std.c.PROT.READ | std.c.PROT.WRITE;
@@ -259,7 +259,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                         const fd: os.fd_t = -1;
                         const offset: usize = 0;
                         var slice = try os.mmap(null, self.max_virtual_alloc_bytes, prot, map, fd, offset);
-                        self.items.ptr = @ptrCast([*]T, @alignCast(alignment, slice.ptr));
+                        self.items.ptr = @as([*]T, @ptrCast(@alignCast(slice.ptr)));
                         self.items.len = 0;
                     }
                 } else if (current_capacity_bytes == self.max_virtual_alloc_bytes) {
@@ -269,7 +269,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
 
                 if (builtin.os.tag == .windows) {
                     const w = std.os.windows;
-                    _ = try w.VirtualAlloc(@ptrCast(w.PVOID, self.items.ptr), new_capacity_bytes, w.MEM_COMMIT, w.PAGE_READWRITE);
+                    _ = try w.VirtualAlloc(@as(w.PVOID, @ptrCast(self.items.ptr)), new_capacity_bytes, w.MEM_COMMIT, w.PAGE_READWRITE);
                 }
             }
 
@@ -310,7 +310,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
         }
 
         fn calcBytesUsedForCapacity(capacity: usize) usize {
-            return mem.alignForward(k_sizeof * capacity, mem.page_size);
+            return mem.alignForward(usize, k_sizeof * capacity, mem.page_size);
         }
     };
 }
@@ -327,7 +327,7 @@ fn darwin_syscall3(number: usize, arg1: usize, arg2: usize, arg3: usize) usize {
 }
 
 fn darwin_madvise(ptr: [*]align(mem.page_size) u8, length: usize, advice: u32) os.MadviseError!void {
-    if (darwin_syscall3(75, @ptrToInt(ptr), length, advice) == -1) {
+    if (darwin_syscall3(75, @intFromPtr(ptr), length, advice) == -1) {
         return switch (os.errno()) {
             os.c.INVAL => os.MadviseError.InvalidSyscall,
             os.c.ENOMEM => os.MadviseError.OutOfMemory,
