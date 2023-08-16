@@ -259,7 +259,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                         const fd: os.fd_t = -1;
                         const offset: usize = 0;
                         var slice = try os.mmap(null, self.max_virtual_alloc_bytes, prot, map, fd, offset);
-                        self.items.ptr = @as([*]T, @ptrCast(@alignCast(slice.ptr)));
+                        self.items.ptr = @alignCast(@ptrCast(slice.ptr));
                         self.items.len = 0;
                     }
                 } else if (current_capacity_bytes == self.max_virtual_alloc_bytes) {
