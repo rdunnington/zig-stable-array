@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const assert = std.debug.assert;
 
@@ -63,7 +64,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             self.items.len += items.len;
 
             mem.copyBackwards(T, self.items[i + items.len .. self.items.len], self.items[i .. self.items.len - items.len]);
-            mem.copy(T, self.items[i .. i + items.len], items);
+            @memcpy(self.items[i .. i + items.len], items);
         }
 
         pub fn replaceRange(self: *Self, start: usize, len: usize, new_items: []const T) AllocError!void {
@@ -71,15 +72,15 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             const range = self.items[start..after_range];
 
             if (range.len == new_items.len)
-                mem.copy(T, range, new_items)
+                @memcpy(range, new_items)
             else if (range.len < new_items.len) {
                 const first = new_items[0..range.len];
                 const rest = new_items[range.len..];
 
-                mem.copy(T, range, first);
+                @memcpy(range, first);
                 try self.insertSlice(after_range, rest);
             } else {
-                mem.copy(T, range, new_items);
+                @memcpy(range, new_items);
                 const after_subrange = start + new_items.len;
 
                 for (self.items[after_range..], 0..) |item, i| {
@@ -217,7 +218,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                             else => {},
                         }
                     } else {
-                        os.madvise(addr, bytes_to_free, std.c.MADV.DONTNEED) catch unreachable;
+                        posix.madvise(addr, bytes_to_free, std.c.MADV.DONTNEED) catch unreachable;
                     }
                 }
 
@@ -245,7 +246,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     var slice: []align(mem.page_size) const u8 = undefined;
                     slice.ptr = @alignCast(@as([*]u8, @ptrCast(self.items.ptr)));
                     slice.len = self.max_virtual_alloc_bytes;
-                    os.munmap(slice);
+                    posix.munmap(slice);
                 }
             }
 
@@ -266,10 +267,13 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                         self.items.len = 0;
                     } else {
                         const prot: u32 = std.c.PROT.NONE;
-                        const map: u32 = std.c.MAP.PRIVATE | std.c.MAP.ANONYMOUS;
-                        const fd: os.fd_t = -1;
+                        const map: std.c.MAP = .{
+                            .ANONYMOUS = true,
+                            .TYPE = .PRIVATE,
+                        };
+                        const fd: posix.fd_t = -1;
                         const offset: usize = 0;
-                        const slice = os.mmap(null, self.max_virtual_alloc_bytes, prot, map, fd, offset) catch return AllocError.OutOfMemory;
+                        const slice = posix.mmap(null, self.max_virtual_alloc_bytes, prot, map, fd, offset) catch return AllocError.OutOfMemory;
                         self.items.ptr = @alignCast(@ptrCast(slice.ptr));
                         self.items.len = 0;
                     }
@@ -287,11 +291,15 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     const remap_region_begin: [*]u8 = region_begin + current_capacity_bytes;
 
                     const prot: u32 = std.c.PROT.READ | std.c.PROT.WRITE;
-                    const map: u32 = std.c.MAP.PRIVATE | std.c.MAP.ANONYMOUS | std.c.MAP.FIXED;
-                    const fd: os.fd_t = -1;
+                    const map: std.c.MAP = .{
+                        .ANONYMOUS = true,
+                        .TYPE = .PRIVATE,
+                        .FIXED = true,
+                    };
+                    const fd: posix.fd_t = -1;
                     const offset: usize = 0;
 
-                    _ = os.mmap(@alignCast(remap_region_begin), resize_capacity, prot, map, fd, offset) catch return AllocError.OutOfMemory;
+                    _ = posix.mmap(@alignCast(remap_region_begin), resize_capacity, prot, map, fd, offset) catch return AllocError.OutOfMemory;
                 }
             }
 
