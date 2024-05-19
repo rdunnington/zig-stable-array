@@ -4,6 +4,8 @@ const os = std.os;
 const mem = std.mem;
 const assert = std.debug.assert;
 
+const AllocError = std.mem.Allocator.Error;
+
 const darwin = struct {
     extern "c" fn madvise(ptr: [*]align(mem.page_size) u8, length: usize, advice: c_int) c_int;
 };
@@ -38,7 +40,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             };
         }
 
-        pub fn initCapacity(max_virtual_alloc_bytes: usize, capacity: usize) !Self {
+        pub fn initCapacity(max_virtual_alloc_bytes: usize, capacity: usize) AllocError!Self {
             var self = Self.init(max_virtual_alloc_bytes);
             try self.ensureTotalCapacity(capacity);
             return self;
@@ -48,7 +50,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             self.clearAndFree();
         }
 
-        pub fn insert(self: *Self, n: usize, item: T) !void {
+        pub fn insert(self: *Self, n: usize, item: T) AllocError!void {
             try self.ensureUnusedCapacity(1);
             self.items.len += 1;
 
@@ -56,7 +58,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             self.items[n] = item;
         }
 
-        pub fn insertSlice(self: *Self, i: usize, items: []const T) !void {
+        pub fn insertSlice(self: *Self, i: usize, items: []const T) AllocError!void {
             try self.ensureUnusedCapacity(items.len);
             self.items.len += items.len;
 
@@ -64,7 +66,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             mem.copy(T, self.items[i .. i + items.len], items);
         }
 
-        pub fn replaceRange(self: *Self, start: usize, len: usize, new_items: []const T) !void {
+        pub fn replaceRange(self: *Self, start: usize, len: usize, new_items: []const T) AllocError!void {
             const after_range = start + len;
             const range = self.items[start..after_range];
 
@@ -88,7 +90,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             }
         }
 
-        pub fn append(self: *Self, item: T) !void {
+        pub fn append(self: *Self, item: T) AllocError!void {
             const new_item_ptr = try self.addOne();
             new_item_ptr.* = item;
         }
@@ -98,7 +100,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             new_item_ptr.* = item;
         }
 
-        pub fn appendSlice(self: *Self, items: []const T) !void {
+        pub fn appendSlice(self: *Self, items: []const T) AllocError!void {
             try self.ensureUnusedCapacity(items.len);
             self.appendSliceAssumeCapacity(items);
         }
@@ -111,7 +113,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             mem.copy(T, self.items[old_len..], items);
         }
 
-        pub fn appendNTimes(self: *Self, value: T, n: usize) !void {
+        pub fn appendNTimes(self: *Self, value: T, n: usize) AllocError!void {
             const old_len = self.items.len;
             try self.resize(self.items.len + n);
             @memset(self.items[old_len..self.items.len], value);
@@ -134,12 +136,12 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             return .{ .context = self };
         }
 
-        fn appendWrite(self: *Self, m: []const u8) !usize {
+        fn appendWrite(self: *Self, m: []const u8) AllocError!usize {
             try self.appendSlice(m);
             return m.len;
         }
 
-        pub fn addOne(self: *Self) !*T {
+        pub fn addOne(self: *Self) AllocError!*T {
             const newlen = self.items.len + 1;
             try self.ensureTotalCapacity(newlen);
             return self.addOneAssumeCapacity();
@@ -152,7 +154,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             return &self.items[self.items.len - 1];
         }
 
-        pub fn addManyAsArray(self: *Self, comptime n: usize) !*[n]T {
+        pub fn addManyAsArray(self: *Self, comptime n: usize) AllocError!*[n]T {
             const prev_len = self.items.len;
             try self.resize(self.items.len + n);
             return self.items[prev_len..][0..n];
@@ -184,7 +186,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             return old_item;
         }
 
-        pub fn resize(self: *Self, new_len: usize) !void {
+        pub fn resize(self: *Self, new_len: usize) AllocError!void {
             try self.ensureTotalCapacity(new_len);
             self.items.len = new_len;
         }
@@ -251,7 +253,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             self.items = &[_]T{};
         }
 
-        pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) !void {
+        pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) AllocError!void {
             const new_capacity_bytes = calcBytesUsedForCapacity(new_capacity);
             const current_capacity_bytes: usize = calcBytesUsedForCapacity(self.capacity);
 
@@ -259,33 +261,44 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                 if (self.capacity == 0) {
                     if (builtin.os.tag == .windows) {
                         const w = os.windows;
-                        const addr: w.PVOID = try w.VirtualAlloc(null, self.max_virtual_alloc_bytes, w.MEM_RESERVE, w.PAGE_READWRITE);
+                        const addr: w.PVOID = w.VirtualAlloc(null, self.max_virtual_alloc_bytes, w.MEM_RESERVE, w.PAGE_READWRITE) catch return AllocError.OutOfMemory;
                         self.items.ptr = @alignCast(@ptrCast(addr));
                         self.items.len = 0;
                     } else {
-                        const prot: u32 = std.c.PROT.READ | std.c.PROT.WRITE;
+                        const prot: u32 = std.c.PROT.NONE;
                         const map: u32 = std.c.MAP.PRIVATE | std.c.MAP.ANONYMOUS;
                         const fd: os.fd_t = -1;
                         const offset: usize = 0;
-                        var slice = try os.mmap(null, self.max_virtual_alloc_bytes, prot, map, fd, offset);
+                        var slice = os.mmap(null, self.max_virtual_alloc_bytes, prot, map, fd, offset) catch return AllocError.OutOfMemory;
                         self.items.ptr = @alignCast(@ptrCast(slice.ptr));
                         self.items.len = 0;
                     }
                 } else if (current_capacity_bytes == self.max_virtual_alloc_bytes) {
                     // If you hit this, you likely either didn't reserve enough space up-front, or have a leak that is allocating too many elements
-                    return error.OutOfMemory;
+                    return AllocError.OutOfMemory;
                 }
 
                 if (builtin.os.tag == .windows) {
                     const w = std.os.windows;
-                    _ = try w.VirtualAlloc(@as(w.PVOID, @ptrCast(self.items.ptr)), new_capacity_bytes, w.MEM_COMMIT, w.PAGE_READWRITE);
+                    _ = w.VirtualAlloc(@as(w.PVOID, @ptrCast(self.items.ptr)), new_capacity_bytes, w.MEM_COMMIT, w.PAGE_READWRITE) catch return AllocError.OutOfMemory;
+                } else {
+                    const resize_capacity = new_capacity_bytes - current_capacity_bytes;
+                    const region_begin: [*]u8 = @ptrCast(self.items.ptr);
+                    const remap_region_begin: [*]u8 = region_begin + current_capacity_bytes;
+
+                    const prot: u32 = std.c.PROT.READ | std.c.PROT.WRITE;
+                    const map: u32 = std.c.MAP.PRIVATE | std.c.MAP.ANONYMOUS | std.c.MAP.FIXED;
+                    const fd: os.fd_t = -1;
+                    const offset: usize = 0;
+
+                    _ = os.mmap(@alignCast(remap_region_begin), resize_capacity, prot, map, fd, offset) catch return AllocError.OutOfMemory;
                 }
             }
 
             self.capacity = new_capacity;
         }
 
-        pub fn ensureUnusedCapacity(self: *Self, additional_count: usize) !void {
+        pub fn ensureUnusedCapacity(self: *Self, additional_count: usize) AllocError!void {
             return self.ensureTotalCapacity(self.items.len + additional_count);
         }
 
@@ -395,6 +408,7 @@ test "shrinkAndFree" {
 test "resize" {
     const max: usize = 1024 * 1024 * 1;
     var a = StableArray(u8).init(max);
+    defer a.deinit();
 
     var size: usize = 512;
     while (size <= max) {
@@ -405,6 +419,8 @@ test "resize" {
 
 test "out of memory" {
     var a = StableArrayAligned(u8, mem.page_size).init(TEST_VIRTUAL_ALLOC_SIZE);
+    defer a.deinit();
+
     const max_capacity: usize = TEST_VIRTUAL_ALLOC_SIZE / mem.page_size;
     try a.appendNTimes(0xFF, max_capacity);
     for (a.items) |v| {
@@ -420,5 +436,28 @@ test "out of memory" {
         assert(err == error.OutOfMemory);
     };
     assert(didCatchError == true);
-    a.deinit();
+}
+
+test "huge max size" {
+    const KB = 1024;
+    const MB = KB * 1024;
+    const GB = MB * 1024;
+
+    var a = StableArray(u8).init(GB * 128);
+    defer a.deinit();
+
+    try a.resize(MB * 4);
+    try a.resize(MB * 8);
+    try a.resize(MB * 16);
+    a.items[MB * 16 - 1] = 0xFF;
+}
+
+test "growing retains values" {
+    var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
+    defer a.deinit();
+
+    try a.resize(mem.page_size);
+    a.items[0] = 0xFF;
+    try a.resize(mem.page_size * 2);
+    assert(a.items[0] == 0xFF);
 }
