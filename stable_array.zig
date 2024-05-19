@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
 const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const assert = std.debug.assert;
 
@@ -63,7 +64,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             self.items.len += items.len;
 
             mem.copyBackwards(T, self.items[i + items.len .. self.items.len], self.items[i .. self.items.len - items.len]);
-            mem.copy(T, self.items[i .. i + items.len], items);
+            @memcpy(self.items[i .. i + items.len], items);
         }
 
         pub fn replaceRange(self: *Self, start: usize, len: usize, new_items: []const T) AllocError!void {
@@ -71,15 +72,15 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             const range = self.items[start..after_range];
 
             if (range.len == new_items.len)
-                mem.copy(T, range, new_items)
+                @memcpy(range, new_items)
             else if (range.len < new_items.len) {
                 const first = new_items[0..range.len];
                 const rest = new_items[range.len..];
 
-                mem.copy(T, range, first);
+                @memcpy(range, first);
                 try self.insertSlice(after_range, rest);
             } else {
-                mem.copy(T, range, new_items);
+                @memcpy(range, new_items);
                 const after_subrange = start + new_items.len;
 
                 for (self.items[after_range..], 0..) |item, i| {
@@ -110,7 +111,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
             const new_len = old_len + items.len;
             assert(new_len <= self.capacity);
             self.items.len = new_len;
-            mem.copy(T, self.items[old_len..], items);
+            @memcpy(self.items[old_len..], items);
         }
 
         pub fn appendNTimes(self: *Self, value: T, n: usize) AllocError!void {
@@ -205,19 +206,19 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     const addr: usize = @intFromPtr(self.items.ptr) + new_capacity_bytes;
                     w.VirtualFree(@as(w.PVOID, @ptrFromInt(addr)), bytes_to_free, w.MEM_DECOMMIT);
                 } else {
-                    var base_addr: usize = @intFromPtr(self.items.ptr);
-                    var offset_addr: usize = base_addr + new_capacity_bytes;
-                    var addr: [*]align(mem.page_size) u8 = @ptrFromInt(offset_addr);
+                    const base_addr: usize = @intFromPtr(self.items.ptr);
+                    const offset_addr: usize = base_addr + new_capacity_bytes;
+                    const addr: [*]align(mem.page_size) u8 = @ptrFromInt(offset_addr);
                     if (comptime builtin.target.isDarwin()) {
                         const MADV_DONTNEED = 4;
                         const err: c_int = darwin.madvise(addr, bytes_to_free, MADV_DONTNEED);
-                        switch (@as(os.darwin.E, @enumFromInt(err))) {
-                            os.E.INVAL => unreachable,
-                            os.E.NOMEM => unreachable,
+                        switch (@as(posix.E, @enumFromInt(err))) {
+                            posix.E.INVAL => unreachable,
+                            posix.E.NOMEM => unreachable,
                             else => {},
                         }
                     } else {
-                        os.madvise(addr, bytes_to_free, std.c.MADV.DONTNEED) catch unreachable;
+                        posix.madvise(addr, bytes_to_free, std.c.MADV.DONTNEED) catch unreachable;
                     }
                 }
 
@@ -245,7 +246,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     var slice: []align(mem.page_size) const u8 = undefined;
                     slice.ptr = @alignCast(@as([*]u8, @ptrCast(self.items.ptr)));
                     slice.len = self.max_virtual_alloc_bytes;
-                    os.munmap(slice);
+                    posix.munmap(slice);
                 }
             }
 
@@ -266,10 +267,13 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                         self.items.len = 0;
                     } else {
                         const prot: u32 = std.c.PROT.NONE;
-                        const map: u32 = std.c.MAP.PRIVATE | std.c.MAP.ANONYMOUS;
-                        const fd: os.fd_t = -1;
+                        const map: std.c.MAP = .{
+                            .ANONYMOUS = true,
+                            .TYPE = .PRIVATE,
+                        };
+                        const fd: posix.fd_t = -1;
                         const offset: usize = 0;
-                        var slice = os.mmap(null, self.max_virtual_alloc_bytes, prot, map, fd, offset) catch return AllocError.OutOfMemory;
+                        const slice = posix.mmap(null, self.max_virtual_alloc_bytes, prot, map, fd, offset) catch return AllocError.OutOfMemory;
                         self.items.ptr = @alignCast(@ptrCast(slice.ptr));
                         self.items.len = 0;
                     }
@@ -287,11 +291,15 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     const remap_region_begin: [*]u8 = region_begin + current_capacity_bytes;
 
                     const prot: u32 = std.c.PROT.READ | std.c.PROT.WRITE;
-                    const map: u32 = std.c.MAP.PRIVATE | std.c.MAP.ANONYMOUS | std.c.MAP.FIXED;
-                    const fd: os.fd_t = -1;
+                    const map: std.c.MAP = .{
+                        .ANONYMOUS = true,
+                        .TYPE = .PRIVATE,
+                        .FIXED = true,
+                    };
+                    const fd: posix.fd_t = -1;
                     const offset: usize = 0;
 
-                    _ = os.mmap(@alignCast(remap_region_begin), resize_capacity, prot, map, fd, offset) catch return AllocError.OutOfMemory;
+                    _ = posix.mmap(@alignCast(remap_region_begin), resize_capacity, prot, map, fd, offset) catch return AllocError.OutOfMemory;
                 }
             }
 
