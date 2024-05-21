@@ -1,0 +1,12 @@
+.{
+  .name = "zig-stable-array",
+  .version = "0.1.0",
+  .dependencies = .{},
+  .paths = .{
+    "build.zig",
+    "build.zig.zon",
+    "stable_array.zig",
+    "LICENSE",
+    "README.md",
+  }
+}
