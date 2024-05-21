@@ -7,7 +7,7 @@ Typical usage is to specify a large size up-front that the array should not enco
 
 Usage:
 ```zig
-var array = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
+var array = StableArray(u8).init(1024 * 1024 * 1024 * 128); // virtual address reservation of 128 GB
 try array.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
 assert(array.calcTotalUsedBytes() == mem.page_size);
 for (array.items) |v, i| {
