@@ -16,7 +16,7 @@ pub fn StableArray(comptime T: type) type {
     return StableArrayAligned(T, @alignOf(T));
 }
 
-pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
+pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
     if (@sizeOf(T) == 0) {
         @compileError("StableArray does not support types of size 0. Use ArrayList instead.");
     }
@@ -29,14 +29,20 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
 
         pub const k_sizeof: usize = if (alignment > @sizeOf(T)) alignment else @sizeOf(T);
         pub const page_size: usize = heap.pageSize();
+        pub const alignment = _alignment;
 
         items: Slice,
         capacity: usize,
         max_virtual_alloc_bytes: usize,
 
-        pub fn pageSize(self: *Self) usize {
+        pub fn getPageSize(self: *Self) usize {
             _ = self;
             return Self.page_size;
+        }
+
+        pub fn getAlignment(self: *Self) usize {
+            _ = self;
+            return Self.alignment;
         }
 
         pub fn init(max_virtual_alloc_bytes: usize) Self {
@@ -362,18 +368,19 @@ test "init" {
     a.deinit();
 
     var b = StableArrayAligned(u8, 16).init(TEST_VIRTUAL_ALLOC_SIZE);
+    assert(b.getAlignment() == 16);
     assert(b.items.len == 0);
     assert(b.capacity == 0);
     assert(b.max_virtual_alloc_bytes == TEST_VIRTUAL_ALLOC_SIZE);
     b.deinit();
 
-    assert(a.pageSize() == b.pageSize());
+    assert(a.getPageSize() == b.getPageSize());
 }
 
 test "append" {
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     try a.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
-    assert(a.calcTotalUsedBytes() == a.pageSize());
+    assert(a.calcTotalUsedBytes() == a.getPageSize());
     for (a.items, 0..) |v, i| {
         assert(v == i);
     }
@@ -381,7 +388,7 @@ test "append" {
 
     var b = StableArrayAligned(u8, heap.pageSize()).init(TEST_VIRTUAL_ALLOC_SIZE);
     try b.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
-    assert(b.calcTotalUsedBytes() == a.pageSize() * 10);
+    assert(b.calcTotalUsedBytes() == a.getPageSize() * 10);
     for (b.items, 0..) |v, i| {
         assert(v == i);
     }
@@ -389,11 +396,12 @@ test "append" {
 }
 
 test "shrinkAndFree" {
+    const page_size = heap.pageSize();
+
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     try a.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     a.shrinkAndFree(5);
-
-    assert(a.calcTotalUsedBytes() == a.pageSize());
+    assert(a.calcTotalUsedBytes() == page_size); // still using only a page
     assert(a.items.len == 5);
     for (a.items, 0..) |v, i| {
         assert(v == i);
@@ -403,17 +411,18 @@ test "shrinkAndFree" {
     var b = StableArrayAligned(u8, heap.pageSize()).init(TEST_VIRTUAL_ALLOC_SIZE);
     try b.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     b.shrinkAndFree(5);
-    assert(b.calcTotalUsedBytes() == a.pageSize() * 5);
+    assert(b.calcTotalUsedBytes() == page_size * 5); // alignment of each item is 1 page
     assert(b.items.len == 5);
     for (b.items, 0..) |v, i| {
         assert(v == i);
     }
     b.deinit();
 
-    var c = StableArrayAligned(u8, 2048).init(TEST_VIRTUAL_ALLOC_SIZE);
+    var c = StableArrayAligned(u8, page_size / 2).init(TEST_VIRTUAL_ALLOC_SIZE);
+    assert(c.getAlignment() == page_size / 2);
     try c.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     c.shrinkAndFree(5);
-    assert(c.calcTotalUsedBytes() == a.pageSize() * 3);
+    assert(c.calcTotalUsedBytes() == page_size * 3);
     assert(c.capacity == 6);
     assert(c.items.len == 5);
     for (c.items, 0..) |v, i| {
@@ -438,7 +447,7 @@ test "out of memory" {
     var a = StableArrayAligned(u8, heap.pageSize()).init(TEST_VIRTUAL_ALLOC_SIZE);
     defer a.deinit();
 
-    const max_capacity: usize = TEST_VIRTUAL_ALLOC_SIZE / a.pageSize();
+    const max_capacity: usize = TEST_VIRTUAL_ALLOC_SIZE / a.getPageSize();
     try a.appendNTimes(0xFF, max_capacity);
     for (a.items) |v| {
         assert(v == 0xFF);
@@ -473,8 +482,8 @@ test "growing retains values" {
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     defer a.deinit();
 
-    try a.resize(a.pageSize());
+    try a.resize(a.getPageSize());
     a.items[0] = 0xFF;
-    try a.resize(a.pageSize() * 2);
+    try a.resize(a.getPageSize() * 2);
     assert(a.items[0] == 0xFF);
 }
