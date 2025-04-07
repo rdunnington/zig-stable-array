@@ -3,19 +3,20 @@ const builtin = @import("builtin");
 const os = std.os;
 const posix = std.posix;
 const mem = std.mem;
+const heap = std.heap;
 const assert = std.debug.assert;
 
 const AllocError = std.mem.Allocator.Error;
 
 const darwin = struct {
-    extern "c" fn madvise(ptr: [*]align(mem.page_size) u8, length: usize, advice: c_int) c_int;
+    extern "c" fn madvise(ptr: [*]align(heap.page_size_min) u8, length: usize, advice: c_int) c_int;
 };
 
 pub fn StableArray(comptime T: type) type {
     return StableArrayAligned(T, @alignOf(T));
 }
 
-pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
+pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
     if (@sizeOf(T) == 0) {
         @compileError("StableArray does not support types of size 0. Use ArrayList instead.");
     }
@@ -27,13 +28,25 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
         pub const VariableSlice = [*]align(alignment) T;
 
         pub const k_sizeof: usize = if (alignment > @sizeOf(T)) alignment else @sizeOf(T);
+        pub const page_size: usize = heap.pageSize();
+        pub const alignment = _alignment;
 
         items: Slice,
         capacity: usize,
         max_virtual_alloc_bytes: usize,
 
+        pub fn getPageSize(self: *Self) usize {
+            _ = self;
+            return Self.page_size;
+        }
+
+        pub fn getAlignment(self: *Self) usize {
+            _ = self;
+            return Self.alignment;
+        }
+
         pub fn init(max_virtual_alloc_bytes: usize) Self {
-            assert(@mod(max_virtual_alloc_bytes, mem.page_size) == 0); // max_virtual_alloc_bytes must be a multiple of mem.page_size
+            assert(@mod(max_virtual_alloc_bytes, page_size) == 0); // max_virtual_alloc_bytes must be a multiple of page_size
             return Self{
                 .items = &[_]T{},
                 .capacity = 0,
@@ -208,8 +221,8 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                 } else {
                     const base_addr: usize = @intFromPtr(self.items.ptr);
                     const offset_addr: usize = base_addr + new_capacity_bytes;
-                    const addr: [*]align(mem.page_size) u8 = @ptrFromInt(offset_addr);
-                    if (comptime builtin.target.isDarwin()) {
+                    const addr: [*]align(heap.page_size_min) u8 = @ptrFromInt(offset_addr);
+                    if (comptime builtin.os.tag.isDarwin()) {
                         const MADV_DONTNEED = 4;
                         const err: c_int = darwin.madvise(addr, bytes_to_free, MADV_DONTNEED);
                         switch (@as(posix.E, @enumFromInt(err))) {
@@ -243,7 +256,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
                     const w = os.windows;
                     w.VirtualFree(@as(*anyopaque, @ptrCast(self.items.ptr)), 0, w.MEM_RELEASE);
                 } else {
-                    var slice: []align(mem.page_size) const u8 = undefined;
+                    var slice: []align(heap.page_size_min) const u8 = undefined;
                     slice.ptr = @alignCast(@as([*]u8, @ptrCast(self.items.ptr)));
                     slice.len = self.max_virtual_alloc_bytes;
                     posix.munmap(slice);
@@ -340,7 +353,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
         }
 
         fn calcBytesUsedForCapacity(capacity: usize) usize {
-            return mem.alignForward(usize, k_sizeof * capacity, mem.page_size);
+            return mem.alignForward(usize, k_sizeof * capacity, page_size);
         }
     };
 }
@@ -355,24 +368,27 @@ test "init" {
     a.deinit();
 
     var b = StableArrayAligned(u8, 16).init(TEST_VIRTUAL_ALLOC_SIZE);
+    assert(b.getAlignment() == 16);
     assert(b.items.len == 0);
     assert(b.capacity == 0);
     assert(b.max_virtual_alloc_bytes == TEST_VIRTUAL_ALLOC_SIZE);
     b.deinit();
+
+    assert(a.getPageSize() == b.getPageSize());
 }
 
 test "append" {
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     try a.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
-    assert(a.calcTotalUsedBytes() == mem.page_size);
+    assert(a.calcTotalUsedBytes() == a.getPageSize());
     for (a.items, 0..) |v, i| {
         assert(v == i);
     }
     a.deinit();
 
-    var b = StableArrayAligned(u8, mem.page_size).init(TEST_VIRTUAL_ALLOC_SIZE);
+    var b = StableArrayAligned(u8, heap.pageSize()).init(TEST_VIRTUAL_ALLOC_SIZE);
     try b.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
-    assert(b.calcTotalUsedBytes() == mem.page_size * 10);
+    assert(b.calcTotalUsedBytes() == a.getPageSize() * 10);
     for (b.items, 0..) |v, i| {
         assert(v == i);
     }
@@ -380,31 +396,33 @@ test "append" {
 }
 
 test "shrinkAndFree" {
+    const page_size = heap.pageSize();
+
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     try a.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     a.shrinkAndFree(5);
-
-    assert(a.calcTotalUsedBytes() == mem.page_size);
+    assert(a.calcTotalUsedBytes() == page_size); // still using only a page
     assert(a.items.len == 5);
     for (a.items, 0..) |v, i| {
         assert(v == i);
     }
     a.deinit();
 
-    var b = StableArrayAligned(u8, mem.page_size).init(TEST_VIRTUAL_ALLOC_SIZE);
+    var b = StableArrayAligned(u8, heap.pageSize()).init(TEST_VIRTUAL_ALLOC_SIZE);
     try b.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     b.shrinkAndFree(5);
-    assert(b.calcTotalUsedBytes() == mem.page_size * 5);
+    assert(b.calcTotalUsedBytes() == page_size * 5); // alignment of each item is 1 page
     assert(b.items.len == 5);
     for (b.items, 0..) |v, i| {
         assert(v == i);
     }
     b.deinit();
 
-    var c = StableArrayAligned(u8, 2048).init(TEST_VIRTUAL_ALLOC_SIZE);
+    var c = StableArrayAligned(u8, page_size / 2).init(TEST_VIRTUAL_ALLOC_SIZE);
+    assert(c.getAlignment() == page_size / 2);
     try c.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     c.shrinkAndFree(5);
-    assert(c.calcTotalUsedBytes() == mem.page_size * 3);
+    assert(c.calcTotalUsedBytes() == page_size * 3);
     assert(c.capacity == 6);
     assert(c.items.len == 5);
     for (c.items, 0..) |v, i| {
@@ -426,10 +444,10 @@ test "resize" {
 }
 
 test "out of memory" {
-    var a = StableArrayAligned(u8, mem.page_size).init(TEST_VIRTUAL_ALLOC_SIZE);
+    var a = StableArrayAligned(u8, heap.pageSize()).init(TEST_VIRTUAL_ALLOC_SIZE);
     defer a.deinit();
 
-    const max_capacity: usize = TEST_VIRTUAL_ALLOC_SIZE / mem.page_size;
+    const max_capacity: usize = TEST_VIRTUAL_ALLOC_SIZE / a.getPageSize();
     try a.appendNTimes(0xFF, max_capacity);
     for (a.items) |v| {
         assert(v == 0xFF);
@@ -464,8 +482,8 @@ test "growing retains values" {
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     defer a.deinit();
 
-    try a.resize(mem.page_size);
+    try a.resize(a.getPageSize());
     a.items[0] = 0xFF;
-    try a.resize(mem.page_size * 2);
+    try a.resize(a.getPageSize() * 2);
     assert(a.items[0] == 0xFF);
 }

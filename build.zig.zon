@@ -1,6 +1,7 @@
 .{
-  .name = "zig-stable-array",
+  .name = .stable_array,
   .version = "0.1.0",
+  .fingerprint = 0xee760748bd6028de,
   .dependencies = .{},
   .paths = .{
     "build.zig",
