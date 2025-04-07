@@ -28,13 +28,19 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
         pub const VariableSlice = [*]align(alignment) T;
 
         pub const k_sizeof: usize = if (alignment > @sizeOf(T)) alignment else @sizeOf(T);
+        pub const page_size: usize = heap.pageSize();
 
         items: Slice,
         capacity: usize,
         max_virtual_alloc_bytes: usize,
 
+        pub fn pageSize(self: *Self) usize {
+            _ = self;
+            return Self.page_size;
+        }
+
         pub fn init(max_virtual_alloc_bytes: usize) Self {
-            assert(@mod(max_virtual_alloc_bytes, heap.page_size_min) == 0); // max_virtual_alloc_bytes must be a multiple of heap.page_size_min
+            assert(@mod(max_virtual_alloc_bytes, page_size) == 0); // max_virtual_alloc_bytes must be a multiple of page_size
             return Self{
                 .items = &[_]T{},
                 .capacity = 0,
@@ -341,7 +347,7 @@ pub fn StableArrayAligned(comptime T: type, comptime alignment: u29) type {
         }
 
         fn calcBytesUsedForCapacity(capacity: usize) usize {
-            return mem.alignForward(usize, k_sizeof * capacity, heap.page_size_min);
+            return mem.alignForward(usize, k_sizeof * capacity, page_size);
         }
     };
 }
@@ -360,20 +366,22 @@ test "init" {
     assert(b.capacity == 0);
     assert(b.max_virtual_alloc_bytes == TEST_VIRTUAL_ALLOC_SIZE);
     b.deinit();
+
+    assert(a.pageSize() == b.pageSize());
 }
 
 test "append" {
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     try a.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
-    assert(a.calcTotalUsedBytes() == heap.page_size_min);
+    assert(a.calcTotalUsedBytes() == a.pageSize());
     for (a.items, 0..) |v, i| {
         assert(v == i);
     }
     a.deinit();
 
-    var b = StableArrayAligned(u8, heap.page_size_min).init(TEST_VIRTUAL_ALLOC_SIZE);
+    var b = StableArrayAligned(u8, heap.pageSize()).init(TEST_VIRTUAL_ALLOC_SIZE);
     try b.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
-    assert(b.calcTotalUsedBytes() == heap.page_size_min * 10);
+    assert(b.calcTotalUsedBytes() == a.pageSize() * 10);
     for (b.items, 0..) |v, i| {
         assert(v == i);
     }
@@ -385,17 +393,17 @@ test "shrinkAndFree" {
     try a.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     a.shrinkAndFree(5);
 
-    assert(a.calcTotalUsedBytes() == heap.page_size_min);
+    assert(a.calcTotalUsedBytes() == a.pageSize());
     assert(a.items.len == 5);
     for (a.items, 0..) |v, i| {
         assert(v == i);
     }
     a.deinit();
 
-    var b = StableArrayAligned(u8, heap.page_size_min).init(TEST_VIRTUAL_ALLOC_SIZE);
+    var b = StableArrayAligned(u8, heap.pageSize()).init(TEST_VIRTUAL_ALLOC_SIZE);
     try b.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     b.shrinkAndFree(5);
-    assert(b.calcTotalUsedBytes() == heap.page_size_min * 5);
+    assert(b.calcTotalUsedBytes() == a.pageSize() * 5);
     assert(b.items.len == 5);
     for (b.items, 0..) |v, i| {
         assert(v == i);
@@ -405,7 +413,7 @@ test "shrinkAndFree" {
     var c = StableArrayAligned(u8, 2048).init(TEST_VIRTUAL_ALLOC_SIZE);
     try c.appendSlice(&[_]u8{ 0, 1, 2, 3, 4, 5, 6, 7, 8, 9 });
     c.shrinkAndFree(5);
-    assert(c.calcTotalUsedBytes() == heap.page_size_min * 3);
+    assert(c.calcTotalUsedBytes() == a.pageSize() * 3);
     assert(c.capacity == 6);
     assert(c.items.len == 5);
     for (c.items, 0..) |v, i| {
@@ -427,10 +435,10 @@ test "resize" {
 }
 
 test "out of memory" {
-    var a = StableArrayAligned(u8, heap.page_size_min).init(TEST_VIRTUAL_ALLOC_SIZE);
+    var a = StableArrayAligned(u8, heap.pageSize()).init(TEST_VIRTUAL_ALLOC_SIZE);
     defer a.deinit();
 
-    const max_capacity: usize = TEST_VIRTUAL_ALLOC_SIZE / heap.page_size_min;
+    const max_capacity: usize = TEST_VIRTUAL_ALLOC_SIZE / a.pageSize();
     try a.appendNTimes(0xFF, max_capacity);
     for (a.items) |v| {
         assert(v == 0xFF);
@@ -465,8 +473,8 @@ test "growing retains values" {
     var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
     defer a.deinit();
 
-    try a.resize(heap.page_size_min);
+    try a.resize(a.pageSize());
     a.items[0] = 0xFF;
-    try a.resize(heap.page_size_min * 2);
+    try a.resize(a.pageSize() * 2);
     assert(a.items[0] == 0xFF);
 }
