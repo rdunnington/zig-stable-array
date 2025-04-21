@@ -7,14 +7,35 @@ on:
   pull_request:
 
 jobs:
-  test:
-    strategy:
-      matrix:
-        os: [windows-latest, macos-latest, ubuntu-latest]
-    runs-on: ${{matrix.os}}
+  test-windows:
+    runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v2
+      - uses: actions/checkout@v3
       - uses: mlugg/setup-zig@v1
         with:
           version: 0.14.0
-      - run: zig build test
+      - run: |
+          zig build test
+          zig build -Dtarget=x86-windows-gnu test
+
+  test-macos:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.14.0
+        # Note that there's no testing for 32-bit on macos since offical support has been dropped
+      - run: |
+          zig build test
+
+  test-linux:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      - uses: mlugg/setup-zig@v1
+        with:
+          version: 0.14.0
+      - run: |
+          zig build test
+          zig build -Dtarget=x86-linux-gnu test

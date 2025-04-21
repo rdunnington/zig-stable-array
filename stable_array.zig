@@ -469,7 +469,11 @@ test "huge max size" {
     const MB = KB * 1024;
     const GB = MB * 1024;
 
-    var a = StableArray(u8).init(GB * 128);
+    const MAX_MEMORY_32 = GB * 1;
+    const MAX_MEMORY_64 = GB * 128;
+    const MAX_MEMORY = if (@sizeOf(usize) < @sizeOf(u64)) MAX_MEMORY_32 else MAX_MEMORY_64;
+
+    var a = StableArray(u8).init(MAX_MEMORY);
     defer a.deinit();
 
     try a.resize(MB * 4);
