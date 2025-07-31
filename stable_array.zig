@@ -28,16 +28,15 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
         pub const VariableSlice = [*]align(alignment) T;
 
         pub const k_sizeof: usize = if (alignment > @sizeOf(T)) alignment else @sizeOf(T);
-        pub const page_size: usize = heap.pageSize();
         pub const alignment = _alignment;
 
         items: Slice,
         capacity: usize,
         max_virtual_alloc_bytes: usize,
+        page_size: usize,
 
         pub fn getPageSize(self: *Self) usize {
-            _ = self;
-            return Self.page_size;
+            return self.page_size;
         }
 
         pub fn getAlignment(self: *Self) usize {
@@ -46,11 +45,13 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
         }
 
         pub fn init(max_virtual_alloc_bytes: usize) Self {
+            const page_size = heap.pageSize();
             assert(@mod(max_virtual_alloc_bytes, page_size) == 0); // max_virtual_alloc_bytes must be a multiple of page_size
             return Self{
                 .items = &[_]T{},
                 .capacity = 0,
                 .max_virtual_alloc_bytes = max_virtual_alloc_bytes,
+                .page_size = page_size,
             };
         }
 
@@ -208,8 +209,8 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
         pub fn shrinkAndFree(self: *Self, new_len: usize) void {
             assert(new_len <= self.items.len);
 
-            const new_capacity_bytes = calcBytesUsedForCapacity(new_len);
-            const current_capacity_bytes: usize = calcBytesUsedForCapacity(self.capacity);
+            const new_capacity_bytes = self.calcBytesUsedForCapacity(new_len);
+            const current_capacity_bytes: usize = self.calcBytesUsedForCapacity(self.capacity);
 
             if (new_capacity_bytes < current_capacity_bytes) {
                 const bytes_to_free: usize = current_capacity_bytes - new_capacity_bytes;
@@ -268,8 +269,8 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
         }
 
         pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) AllocError!void {
-            const new_capacity_bytes = calcBytesUsedForCapacity(new_capacity);
-            const current_capacity_bytes: usize = calcBytesUsedForCapacity(self.capacity);
+            const new_capacity_bytes = self.calcBytesUsedForCapacity(new_capacity);
+            const current_capacity_bytes: usize = self.calcBytesUsedForCapacity(self.capacity);
 
             if (current_capacity_bytes < new_capacity_bytes) {
                 if (self.capacity == 0) {
@@ -349,11 +350,11 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
         }
 
         pub fn calcTotalUsedBytes(self: Self) usize {
-            return calcBytesUsedForCapacity(self.capacity);
+            return self.calcBytesUsedForCapacity(self.capacity);
         }
 
-        fn calcBytesUsedForCapacity(capacity: usize) usize {
-            return mem.alignForward(usize, k_sizeof * capacity, page_size);
+        fn calcBytesUsedForCapacity(self: Self, capacity: usize) usize {
+            return mem.alignForward(usize, k_sizeof * capacity, self.page_size);
         }
     };
 }
