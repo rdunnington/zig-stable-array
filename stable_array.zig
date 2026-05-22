@@ -12,6 +12,30 @@ const darwin = struct {
     extern "c" fn madvise(ptr: [*]align(heap.page_size_min) u8, length: usize, advice: c_int) c_int;
 };
 
+// Zig 0.16 removed the std.os.windows.VirtualAlloc / VirtualFree wrappers and
+// their associated constants. Declare the bindings we need directly here.
+const win32 = if (builtin.os.tag == .windows) struct {
+    const windows = std.os.windows;
+
+    pub const MEM_COMMIT: windows.DWORD = 0x1000;
+    pub const MEM_RESERVE: windows.DWORD = 0x2000;
+    pub const MEM_DECOMMIT: windows.DWORD = 0x4000;
+    pub const MEM_RELEASE: windows.DWORD = 0x8000;
+    pub const PAGE_READWRITE: windows.DWORD = 0x04;
+
+    pub extern "kernel32" fn VirtualAlloc(
+        lpAddress: ?windows.LPVOID,
+        dwSize: windows.SIZE_T,
+        flAllocationType: windows.DWORD,
+        flProtect: windows.DWORD,
+    ) callconv(.winapi) ?windows.LPVOID;
+    pub extern "kernel32" fn VirtualFree(
+        lpAddress: ?windows.LPVOID,
+        dwSize: windows.SIZE_T,
+        dwFreeType: windows.DWORD,
+    ) callconv(.winapi) windows.BOOL;
+} else struct {};
+
 pub fn StableArray(comptime T: type) type {
     return StableArrayAligned(T, @alignOf(T));
 }
@@ -216,9 +240,9 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
                 const bytes_to_free: usize = current_capacity_bytes - new_capacity_bytes;
 
                 if (builtin.os.tag == .windows) {
-                    const w = os.windows;
                     const addr: usize = @intFromPtr(self.items.ptr) + new_capacity_bytes;
-                    w.VirtualFree(@as(w.PVOID, @ptrFromInt(addr)), bytes_to_free, w.MEM_DECOMMIT);
+                    const ok = win32.VirtualFree(@as(*anyopaque, @ptrFromInt(addr)), bytes_to_free, win32.MEM_DECOMMIT);
+                    assert(ok.toBool());
                 } else {
                     const base_addr: usize = @intFromPtr(self.items.ptr);
                     const offset_addr: usize = base_addr + new_capacity_bytes;
@@ -254,8 +278,8 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
         pub fn clearAndFree(self: *Self) void {
             if (self.capacity > 0) {
                 if (builtin.os.tag == .windows) {
-                    const w = os.windows;
-                    w.VirtualFree(@as(*anyopaque, @ptrCast(self.items.ptr)), 0, w.MEM_RELEASE);
+                    const ok = win32.VirtualFree(@as(*anyopaque, @ptrCast(self.items.ptr)), 0, win32.MEM_RELEASE);
+                    assert(ok.toBool());
                 } else {
                     var slice: []align(heap.page_size_min) const u8 = undefined;
                     slice.ptr = @alignCast(@as([*]u8, @ptrCast(self.items.ptr)));
@@ -275,12 +299,11 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
             if (current_capacity_bytes < new_capacity_bytes) {
                 if (self.capacity == 0) {
                     if (builtin.os.tag == .windows) {
-                        const w = os.windows;
-                        const addr: w.PVOID = w.VirtualAlloc(null, self.max_virtual_alloc_bytes, w.MEM_RESERVE, w.PAGE_READWRITE) catch return AllocError.OutOfMemory;
+                        const addr = win32.VirtualAlloc(null, self.max_virtual_alloc_bytes, win32.MEM_RESERVE, win32.PAGE_READWRITE) orelse return AllocError.OutOfMemory;
                         self.items.ptr = @alignCast(@ptrCast(addr));
                         self.items.len = 0;
                     } else {
-                        const prot: u32 = std.c.PROT.NONE;
+                        const prot: std.c.PROT = .{};
                         const map: std.c.MAP = .{
                             .ANONYMOUS = true,
                             .TYPE = .PRIVATE,
@@ -297,14 +320,13 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
                 }
 
                 if (builtin.os.tag == .windows) {
-                    const w = std.os.windows;
-                    _ = w.VirtualAlloc(@as(w.PVOID, @ptrCast(self.items.ptr)), new_capacity_bytes, w.MEM_COMMIT, w.PAGE_READWRITE) catch return AllocError.OutOfMemory;
+                    _ = win32.VirtualAlloc(@as(*anyopaque, @ptrCast(self.items.ptr)), new_capacity_bytes, win32.MEM_COMMIT, win32.PAGE_READWRITE) orelse return AllocError.OutOfMemory;
                 } else {
                     const resize_capacity = new_capacity_bytes - current_capacity_bytes;
                     const region_begin: [*]u8 = @ptrCast(self.items.ptr);
                     const remap_region_begin: [*]u8 = region_begin + current_capacity_bytes;
 
-                    const prot: u32 = std.c.PROT.READ | std.c.PROT.WRITE;
+                    const prot: std.c.PROT = .{ .READ = true, .WRITE = true };
                     const map: std.c.MAP = .{
                         .ANONYMOUS = true,
                         .TYPE = .PRIVATE,
