@@ -233,6 +233,13 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
         pub fn shrinkAndFree(self: *Self, new_len: usize) void {
             assert(new_len <= self.items.len);
 
+            // A capacity of zero means there is no reservation, so shrinking
+            // to nothing has to release the reservation rather than strand it.
+            if (new_len == 0) {
+                self.clearAndFree();
+                return;
+            }
+
             const new_capacity_bytes = self.calcBytesUsedForCapacity(new_len);
             const current_capacity_bytes: usize = self.calcBytesUsedForCapacity(self.capacity);
 
@@ -293,6 +300,12 @@ pub fn StableArrayAligned(comptime T: type, comptime _alignment: u29) type {
         }
 
         pub fn ensureTotalCapacity(self: *Self, new_capacity: usize) AllocError!void {
+            // Never lower the capacity here: it records how much of the
+            // reservation is committed, and a capacity of zero means there is
+            // no reservation at all. Lowering it to zero would make the next
+            // growth reserve a fresh range and abandon this one.
+            if (new_capacity <= self.capacity) return;
+
             const new_capacity_bytes = self.calcBytesUsedForCapacity(new_capacity);
             const current_capacity_bytes: usize = self.calcBytesUsedForCapacity(self.capacity);
 
@@ -513,4 +526,55 @@ test "growing retains values" {
     a.items[0] = 0xFF;
     try a.resize(a.getPageSize() * 2);
     assert(a.items[0] == 0xFF);
+}
+
+test "resize smaller keeps capacity and the reservation" {
+    var a = StableArray(u8).init(TEST_VIRTUAL_ALLOC_SIZE);
+    defer a.deinit();
+
+    try a.resize(a.getPageSize() * 2);
+    const ptr = a.items.ptr;
+    const capacity = a.capacity;
+
+    try a.resize(1);
+    assert(a.items.len == 1);
+    assert(a.capacity == capacity);
+
+    try a.resize(0);
+    assert(a.items.len == 0);
+    assert(a.capacity == capacity);
+
+    try a.append(0xFF);
+    assert(a.items.ptr == ptr);
+    assert(a.capacity == capacity);
+}
+
+// A leaked reservation holds its whole address range, so emptying and
+// refilling more often than the address space has room for fails with
+// OutOfMemory if any reservation is abandoned along the way.
+const LEAK_TEST_RESERVE_SIZE = if (@sizeOf(usize) < @sizeOf(u64)) 1024 * 1024 * 256 else 1024 * 1024 * 1024 * 64;
+const LEAK_TEST_CYCLES = if (@sizeOf(usize) < @sizeOf(u64)) 64 else 8192;
+
+test "resize to zero and refill does not leak reservations" {
+    var a = StableArray(u8).init(LEAK_TEST_RESERVE_SIZE);
+    defer a.deinit();
+
+    var cycle: usize = 0;
+    while (cycle < LEAK_TEST_CYCLES) : (cycle += 1) {
+        try a.append(0xFF);
+        try a.resize(0);
+    }
+}
+
+test "shrinkAndFree to zero and refill does not leak reservations" {
+    var a = StableArray(u8).init(LEAK_TEST_RESERVE_SIZE);
+    defer a.deinit();
+
+    var cycle: usize = 0;
+    while (cycle < LEAK_TEST_CYCLES) : (cycle += 1) {
+        try a.append(0xFF);
+        a.shrinkAndFree(0);
+        assert(a.items.len == 0);
+        assert(a.capacity == 0);
+    }
 }
